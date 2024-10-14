@@ -10,19 +10,23 @@ from kivy.clock import Clock
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 from threading import Thread
+from multiprocessing import Process, Queue
 import subprocess
-import signal
+import time
 
 kivy.require('2.0.0')
 
-# Función para manejar el timeout de los archivos
-class TimeoutException(Exception):
-    pass
+def read_file(file_path, search_line, queue):
+    """Función que lee un archivo en un proceso separado."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if search_line in line:
+                    queue.put(file_path)
+                    break
+    except (IOError, UnicodeDecodeError) as e:
+        queue.put(f"Error: {file_path} - {str(e)}")
 
-def handler(signum, frame):
-    raise TimeoutException()
-
-signal.signal(signal.SIGALRM, handler)
 
 class FileAnalyzerApp(App):
     def build(self):
@@ -91,17 +95,27 @@ class FileAnalyzerApp(App):
         for root, dirs, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
-                try:
-                    signal.alarm(10)  # Establece un límite de 10 segundos por archivo
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            if search_line in line:
-                                found_files.append(file_path)
-                                break
-                except (TimeoutException, IOError, UnicodeDecodeError) as e:
-                    excluded_files.append(f"{file_path} - Error: {str(e)}")
-                finally:
-                    signal.alarm(0)  # Restablecer la alarma
+                queue = Queue()
+                process = Process(target=read_file, args=(file_path, search_line, queue))
+                
+                # Iniciar el proceso de lectura de archivo
+                process.start()
+
+                # Esperar por 10 segundos y luego matar el proceso si no ha terminado
+                process.join(10)
+                if process.is_alive():
+                    process.terminate()  # Terminar el proceso si se excede el tiempo límite
+                    excluded_files.append(f"{file_path} - Error: tiempo excedido")
+                else:
+                    # Obtener el resultado desde la cola del proceso
+                    try:
+                        result = queue.get_nowait()
+                        if "Error" in result:
+                            excluded_files.append(result)
+                        else:
+                            found_files.append(result)
+                    except:
+                        pass
 
                 self.file_count += 1
                 progress = (self.file_count / total_files) * 100
