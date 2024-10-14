@@ -11,8 +11,18 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 from threading import Thread
 import subprocess
+import signal
 
 kivy.require('2.0.0')
+
+# Función para manejar el timeout de los archivos
+class TimeoutException(Exception):
+    pass
+
+def handler(signum, frame):
+    raise TimeoutException()
+
+signal.signal(signal.SIGALRM, handler)
 
 class FileAnalyzerApp(App):
     def build(self):
@@ -38,7 +48,7 @@ class FileAnalyzerApp(App):
         # Contenedor con scroll para mostrar los resultados
         self.scroll_view = ScrollView(size_hint=(1, 0.5))
         self.result_container = GridLayout(cols=1, size_hint_y=None, padding=10, spacing=10)
-        self.result_container.bind(minimum_height=self.result_container.setter('height'))  # Ajustar la altura dinámica
+        self.result_container.bind(minimum_height=self.result_container.setter('height'))
 
         self.scroll_view.add_widget(self.result_container)
         self.layout.add_widget(self.scroll_view)
@@ -64,39 +74,39 @@ class FileAnalyzerApp(App):
         if not search_line:
             self.update_result_label('Por favor, ingrese una línea a buscar.')
             return
-        
+
         self.update_result_label('Analizando archivos...')
         self.file_count = 0  # Contador de archivos analizados
         self.progress_bar.value = 0  # Reiniciar barra de progreso
         Thread(target=self.analyze_files, args=(search_line,)).start()
 
     def analyze_files(self, search_line):
-        directory = '/' if self.check_root() else '.'  # Cambia a '/' si hay acceso root, de lo contrario, usa el directorio actual
+        directory = '/' if self.check_root() else '.'
         found_files = []
-        excluded_files = []  # Para almacenar archivos excluidos y errores
+        excluded_files = []
 
         # Contar el total de archivos
         total_files = sum(len(files) for _, _, files in os.walk(directory))
 
-        # Recorrer archivos y carpetas en el directorio
         for root, dirs, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
                 try:
+                    signal.alarm(10)  # Establece un límite de 10 segundos por archivo
                     with open(file_path, 'r', encoding='utf-8') as f:
                         for line in f:
                             if search_line in line:
                                 found_files.append(file_path)
-                                break  # Deja de leer este archivo si ya se encontró la línea
-                except (IOError, UnicodeDecodeError) as e:
-                    excluded_files.append(f"{file_path} - Error: {str(e)}")  # Almacenar archivo y error
+                                break
+                except (TimeoutException, IOError, UnicodeDecodeError) as e:
+                    excluded_files.append(f"{file_path} - Error: {str(e)}")
+                finally:
+                    signal.alarm(0)  # Restablecer la alarma
 
-                # Incrementar contador y actualizar la barra y etiqueta de progreso
                 self.file_count += 1
                 progress = (self.file_count / total_files) * 100
                 Clock.schedule_once(lambda dt: self.update_progress(self.file_count, total_files, progress))
 
-        # Actualizar la interfaz desde el hilo principal
         Clock.schedule_once(lambda dt: self.update_result(found_files, excluded_files))
 
     def update_progress(self, count, total, progress):
@@ -104,10 +114,8 @@ class FileAnalyzerApp(App):
         self.progress_label.text = f'Progreso: {count} de {total} archivos analizados.'
 
     def update_result(self, found_files, excluded_files):
-        # Limpiar el contenedor de resultados
         self.result_container.clear_widgets()
 
-        # Mostrar archivos encontrados
         if found_files:
             for file in found_files:
                 label = Label(text=file, size_hint_y=None, height=30, text_size=(self.result_container.width - 20, None), halign='left', valign='middle')
@@ -116,7 +124,6 @@ class FileAnalyzerApp(App):
             no_result_label = Label(text='No se encontraron archivos que contengan la línea buscada.', size_hint_y=None, height=30, halign='left')
             self.result_container.add_widget(no_result_label)
 
-        # Mostrar archivos excluidos
         if excluded_files:
             excluded_label = Label(text='\nArchivos excluidos (errores):', size_hint_y=None, height=30, halign='left', bold=True)
             self.result_container.add_widget(excluded_label)
@@ -125,7 +132,6 @@ class FileAnalyzerApp(App):
                 self.result_container.add_widget(label)
 
     def update_result_label(self, text):
-        # Limpiar contenedor de resultados y agregar un nuevo mensaje
         self.result_container.clear_widgets()
         label = Label(text=text, size_hint_y=None, height=30, halign='left')
         self.result_container.add_widget(label)
