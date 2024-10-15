@@ -95,14 +95,20 @@ class FileAnalyzerApp(App):
         for root, dirs, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
+
+                # Limitar análisis a archivos de 5MB o menos
+                if os.path.getsize(file_path) > 5 * 1024 * 1024:
+                    excluded_files.append(f"{file_path} - Error: archivo demasiado grande")
+                    continue
+
                 queue = Queue()
                 process = Process(target=read_file, args=(file_path, search_line, queue))
                 
                 # Iniciar el proceso de lectura de archivo
                 process.start()
 
-                # Esperar por 10 segundos y luego matar el proceso si no ha terminado
-                process.join(10)
+                # Esperar por 5 segundos y luego matar el proceso si no ha terminado
+                process.join(5)
                 if process.is_alive():
                     process.terminate()  # Terminar el proceso si se excede el tiempo límite
                     excluded_files.append(f"{file_path} - Error: tiempo excedido")
@@ -149,6 +155,7 @@ class FileAnalyzerApp(App):
         self.result_container.clear_widgets()
         label = Label(text=text, size_hint_y=None, height=30, halign='left')
         self.result_container.add_widget(label)
+
 
 if __name__ == '__main__':
     FileAnalyzerApp().run()
